@@ -543,6 +543,163 @@ function MovieDetail({ movieId, token, onBack, onWatchlist, inWatchlist }) {
   );
 }
 
+// ─── Recommendation Engine ────────────────────────────────────────────────────
+function getRecommendations(allMovies, watchlistIds) {
+  if (!watchlistIds.length || !allMovies.length) return [];
+
+  const watchlistMovies = allMovies.filter(m => watchlistIds.includes(m._id));
+  const nonWatchlist = allMovies.filter(m => !watchlistIds.includes(m._id));
+
+  // Build frequency maps from watchlist
+  const genreFreq = {};
+  const directorFreq = {};
+  const castFreq = {};
+
+  watchlistMovies.forEach(m => {
+    (m.genre || []).forEach(g => { genreFreq[g] = (genreFreq[g] || 0) + 1; });
+    if (m.director) directorFreq[m.director] = (directorFreq[m.director] || 0) + 1;
+    (m.cast || []).forEach(a => { castFreq[a] = (castFreq[a] || 0) + 1; });
+  });
+
+  const avgRating = watchlistMovies.reduce((s, m) => s + m.rating, 0) / (watchlistMovies.length || 1);
+
+  // Score each non-watchlist movie
+  return nonWatchlist
+    .map(m => {
+      let score = 0;
+      (m.genre || []).forEach(g => { score += (genreFreq[g] || 0) * 3; });
+      if (m.director && directorFreq[m.director]) score += directorFreq[m.director] * 4;
+      (m.cast || []).forEach(a => { if (castFreq[a]) score += castFreq[a] * 2; });
+      // Boost high-rated movies that align with watchlist quality
+      if (m.rating >= avgRating - 0.5) score += 1;
+      if (m.score >= 80) score += 1;
+      return { ...m, recScore: score };
+    })
+    .filter(m => m.recScore > 0)
+    .sort((a, b) => b.recScore - a.recScore || b.rating - a.rating)
+    .slice(0, 12);
+}
+
+// ─── Recommendations Tab ──────────────────────────────────────────────────────
+function RecommendationsTab({ allMovies, watchlistIds, token, onWatchlist, watchlist, onSelect }) {
+  const recommendations = getRecommendations(allMovies, watchlistIds);
+
+  const watchlistMovies = allMovies.filter(m => watchlistIds.includes(m._id));
+  const topGenres = Object.entries(
+    watchlistMovies.flatMap(m => m.genre || [])
+      .reduce((acc, g) => { acc[g] = (acc[g] || 0) + 1; return acc; }, {})
+  ).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  const topDirectors = Object.entries(
+    watchlistMovies.map(m => m.director).filter(Boolean)
+      .reduce((acc, d) => { acc[d] = (acc[d] || 0) + 1; return acc; }, {})
+  ).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+  if (!watchlistIds.length) {
+    return (
+      <div style={{ textAlign: "center", padding: "100px 24px", color: "#6b5a3e" }}>
+        <div style={{ fontSize: "56px", marginBottom: "20px" }}>✦</div>
+        <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "26px", fontWeight: 300, color: "#a0875a", marginBottom: "10px" }}>
+          Your Recommendations Await
+        </h2>
+        <p style={{ fontSize: "13px", fontFamily: "'DM Mono',monospace", maxWidth: "340px", margin: "0 auto", lineHeight: 1.7 }}>
+          Add movies to your Watchlist and we'll craft personalised picks based on your taste.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {/* ── Taste Profile Banner ── */}
+      <div style={{
+        marginBottom: "32px", padding: "24px 28px",
+        background: "linear-gradient(135deg, rgba(212,168,66,0.07) 0%, rgba(160,135,90,0.03) 100%)",
+        border: "1px solid rgba(212,168,66,0.14)", borderRadius: "14px",
+        display: "flex", gap: "40px", flexWrap: "wrap", alignItems: "center",
+      }}>
+        <div>
+          <p style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "6px" }}>Your Taste Profile</p>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            {topGenres.map(([g, count]) => (
+              <span key={g} style={{
+                background: "rgba(212,168,66,0.12)", border: "1px solid rgba(212,168,66,0.25)",
+                borderRadius: "20px", padding: "4px 14px", fontSize: "11px",
+                color: "#d4a842", fontFamily: "'DM Mono',monospace",
+              }}>
+                {g} <span style={{ opacity: 0.5, fontSize: "9px" }}>×{count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+        {topDirectors.length > 0 && (
+          <div>
+            <p style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "6px" }}>Favourite Directors</p>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {topDirectors.map(([d]) => (
+                <span key={d} style={{
+                  background: "rgba(160,135,90,0.08)", border: "1px solid rgba(160,135,90,0.2)",
+                  borderRadius: "20px", padding: "4px 14px", fontSize: "11px",
+                  color: "#a0875a", fontFamily: "'DM Mono',monospace",
+                }}>{d}</span>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={{ marginLeft: "auto", textAlign: "right" }}>
+          <p style={{ fontSize: "28px", fontFamily: "'Cormorant Garamond',serif", color: "#d4a842", margin: 0, lineHeight: 1 }}>{recommendations.length}</p>
+          <p style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.1em", margin: "4px 0 0" }}>PICKS FOR YOU</p>
+        </div>
+      </div>
+
+      {/* ── Heading ── */}
+      <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "24px" }}>
+        <div style={{ width: "3px", height: "28px", background: "linear-gradient(180deg,#d4a842,#8a6820)", borderRadius: "2px" }} />
+        <div>
+          <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "24px", fontWeight: 300, color: "#f0e6d3", margin: 0 }}>
+            Recommended for You
+          </h2>
+          <p style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", margin: "3px 0 0", letterSpacing: "0.08em" }}>
+            CURATED FROM YOUR WATCHLIST OF {watchlistIds.length} FILM{watchlistIds.length !== 1 ? "S" : ""}
+          </p>
+        </div>
+      </div>
+
+      {/* ── Grid ── */}
+      {recommendations.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "60px 0", color: "#6b5a3e" }}>
+          <p style={{ fontSize: "14px" }}>No recommendations yet — try adding more varied films to your watchlist.</p>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: "16px" }}>
+          {recommendations.map((m, i) => (
+            <div key={m._id} style={{ animation: "fadeUp 0.4s ease both", animationDelay: `${i * 0.04}s`, position: "relative" }}>
+              {/* For You badge */}
+              <div style={{
+                position: "absolute", top: "-7px", left: "50%", transform: "translateX(-50%)",
+                zIndex: 10, background: "linear-gradient(90deg,#d4a842,#f5d07a)",
+                borderRadius: "20px", padding: "2px 10px", fontSize: "9px",
+                color: "#0c0a08", fontFamily: "'DM Mono',monospace", fontWeight: 700,
+                letterSpacing: "0.08em", whiteSpace: "nowrap",
+                boxShadow: "0 2px 10px rgba(212,168,66,0.4)",
+              }}>
+                ✦ FOR YOU
+              </div>
+              <MovieCard
+                movie={m}
+                token={token}
+                onWatchlist={onWatchlist}
+                inWatchlist={watchlist.includes(m._id)}
+                onSelect={onSelect}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard({ user, token, onLogout }) {
   const [movies, setMovies] = useState([]);
@@ -643,9 +800,24 @@ function Dashboard({ user, token, onLogout }) {
           <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "22px", letterSpacing: "0.2em", color: "#d4a842" }}>THEATRON</span>
         </div>
         <div style={{ display: "flex", gap: "16px" }}>
-          {["all", "watchlist"].map(t => (
-            <button key={t} onClick={() => setActiveTab(t)} style={{ background: "none", border: "none", cursor: "pointer", color: activeTab === t ? "#d4a842" : "#6b5a3e", fontSize: "12px", letterSpacing: "0.1em", textTransform: "uppercase", borderBottom: activeTab === t ? "1px solid #d4a842" : "1px solid transparent", paddingBottom: "2px", transition: "all 0.2s" }}>
-              {t === "watchlist" ? `Watchlist (${watchlist.length})` : "All Films"}
+          {[
+            { key: "all", label: "All Films" },
+            { key: "watchlist", label: `Watchlist (${watchlist.length})` },
+            { key: "recommended", label: "✦ For You" },
+          ].map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setActiveTab(key)}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                color: activeTab === key ? "#d4a842" : "#6b5a3e",
+                fontSize: "12px", letterSpacing: "0.1em", textTransform: "uppercase",
+                borderBottom: activeTab === key ? "1px solid #d4a842" : "1px solid transparent",
+                paddingBottom: "2px", transition: "all 0.2s",
+                ...(key === "recommended" && activeTab !== key ? { color: "#a0875a" } : {}),
+              }}
+            >
+              {label}
             </button>
           ))}
         </div>
@@ -668,66 +840,92 @@ function Dashboard({ user, token, onLogout }) {
         </div>
 
         {/* ── Controls ── */}
-        <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center" }}>
-          {/* Search */}
-          <div style={{ position: "relative", flex: "1 1 240px" }}>
-            <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", fontSize: "14px", opacity: 0.4 }}>🔍</span>
-            <input
-              value={searchInput}
-              onChange={e => setSearchInput(e.target.value)}
-              placeholder="Search films…"
-              style={{ width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(160,135,90,0.2)", borderRadius: "7px", padding: "10px 36px 10px 36px", color: "#f0e6d3", fontSize: "13px", fontFamily: "'DM Mono',monospace", outline: "none", boxSizing: "border-box" }}
-            />
-            {searchInput && (
-              <button onClick={() => { setSearchInput(""); setSearch(""); }} style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#6b5a3e", cursor: "pointer", fontSize: "14px", padding: 0 }}>✕</button>
-            )}
+        {activeTab !== "recommended" && (<>
+          <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center" }}>
+            {/* Search */}
+            <div style={{ position: "relative", flex: "1 1 240px" }}>
+              <span style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", fontSize: "14px", opacity: 0.4 }}>🔍</span>
+              <input
+                value={searchInput}
+                onChange={e => setSearchInput(e.target.value)}
+                placeholder="Search films…"
+                style={{ width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(160,135,90,0.2)", borderRadius: "7px", padding: "10px 36px 10px 36px", color: "#f0e6d3", fontSize: "13px", fontFamily: "'DM Mono',monospace", outline: "none", boxSizing: "border-box" }}
+              />
+              {searchInput && (
+                <button onClick={() => { setSearchInput(""); setSearch(""); }} style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#6b5a3e", cursor: "pointer", fontSize: "14px", padding: 0 }}>✕</button>
+              )}
+            </div>
+            {/* Sort */}
+            <select
+              value={sort}
+              onChange={e => handleSortChange(e.target.value)}
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(160,135,90,0.2)", borderRadius: "7px", padding: "10px 14px", color: "#a0875a", fontSize: "12px", fontFamily: "'DM Mono',monospace", cursor: "pointer", outline: "none" }}
+            >
+              <option value="rating">Sort: Rating</option>
+              <option value="score">Sort: Score</option>
+              <option value="year">Sort: Year</option>
+              <option value="title">Sort: Title A–Z</option>
+            </select>
           </div>
-          {/* Sort */}
-          <select
-            value={sort}
-            onChange={e => handleSortChange(e.target.value)}
-            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(160,135,90,0.2)", borderRadius: "7px", padding: "10px 14px", color: "#a0875a", fontSize: "12px", fontFamily: "'DM Mono',monospace", cursor: "pointer", outline: "none" }}
-          >
-            <option value="rating">Sort: Rating</option>
-            <option value="score">Sort: Score</option>
-            <option value="year">Sort: Year</option>
-            <option value="title">Sort: Title A–Z</option>
-          </select>
-        </div>
 
-        {/* ── Genre Pills with themed scroll ── */}
-        <GenreScroller genres={genres} active={genre} onChange={handleGenreChange} />
+          {/* ── Genre Pills with themed scroll ── */}
+          <GenreScroller genres={genres} active={genre} onChange={handleGenreChange} />
 
-        {/* ── Active filter indicator ── */}
-        {(genre !== "All" || search) && (
-          <div style={{ display: "flex", gap: "8px", marginBottom: "16px", alignItems: "center" }}>
-            <span style={{ fontSize: "11px", color: "#6b5a3e" }}>Filtering by:</span>
-            {genre !== "All" && (
-              <span style={{ background: "rgba(212,168,66,0.15)", border: "1px solid rgba(212,168,66,0.3)", borderRadius: "4px", padding: "3px 10px", fontSize: "11px", color: "#d4a842", display: "flex", alignItems: "center", gap: "6px" }}>
-                {genre}
-                <button onClick={() => handleGenreChange("All")} style={{ background: "none", border: "none", color: "#d4a842", cursor: "pointer", padding: 0, fontSize: "12px", lineHeight: 1 }}>✕</button>
-              </span>
-            )}
-            {search && (
-              <span style={{ background: "rgba(160,135,90,0.1)", border: "1px solid rgba(160,135,90,0.2)", borderRadius: "4px", padding: "3px 10px", fontSize: "11px", color: "#a0875a", display: "flex", alignItems: "center", gap: "6px" }}>
-                "{search}"
-                <button onClick={() => { setSearchInput(""); setSearch(""); }} style={{ background: "none", border: "none", color: "#a0875a", cursor: "pointer", padding: 0, fontSize: "12px", lineHeight: 1 }}>✕</button>
-              </span>
-            )}
-            <span style={{ fontSize: "11px", color: "#4a3e2e" }}>{total} result{total !== 1 ? "s" : ""}</span>
-          </div>
-        )}
+          {/* ── Active filter indicator ── */}
+          {(genre !== "All" || search) && (
+            <div style={{ display: "flex", gap: "8px", marginBottom: "16px", alignItems: "center" }}>
+              <span style={{ fontSize: "11px", color: "#6b5a3e" }}>Filtering by:</span>
+              {genre !== "All" && (
+                <span style={{ background: "rgba(212,168,66,0.15)", border: "1px solid rgba(212,168,66,0.3)", borderRadius: "4px", padding: "3px 10px", fontSize: "11px", color: "#d4a842", display: "flex", alignItems: "center", gap: "6px" }}>
+                  {genre}
+                  <button onClick={() => handleGenreChange("All")} style={{ background: "none", border: "none", color: "#d4a842", cursor: "pointer", padding: 0, fontSize: "12px", lineHeight: 1 }}>✕</button>
+                </span>
+              )}
+              {search && (
+                <span style={{ background: "rgba(160,135,90,0.1)", border: "1px solid rgba(160,135,90,0.2)", borderRadius: "4px", padding: "3px 10px", fontSize: "11px", color: "#a0875a", display: "flex", alignItems: "center", gap: "6px" }}>
+                  "{search}"
+                  <button onClick={() => { setSearchInput(""); setSearch(""); }} style={{ background: "none", border: "none", color: "#a0875a", cursor: "pointer", padding: 0, fontSize: "12px", lineHeight: 1 }}>✕</button>
+                </span>
+              )}
+              <span style={{ fontSize: "11px", color: "#4a3e2e" }}>{total} result{total !== 1 ? "s" : ""}</span>
+            </div>
+          )}
+        </>)}
 
-        {/* ── Movie Grid ── */}
+        {/* ── Movie Grid / Watchlist / Recommendations ── */}
         {loading ? (
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "300px", gap: "12px" }}>
             <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#d4a842", animation: "pulse 1s ease-in-out infinite" }} />
             <span style={{ color: "#6b5a3e", fontSize: "13px" }}>Loading films…</span>
           </div>
+        ) : activeTab === "recommended" ? (
+          <RecommendationsTab
+            allMovies={movies}
+            watchlistIds={watchlist}
+            token={token}
+            onWatchlist={handleWatchlist}
+            watchlist={watchlist}
+            onSelect={m => setSelectedMovieId(m._id)}
+          />
+        ) : activeTab === "watchlist" ? (
+          displayMovies.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "80px 0", color: "#6b5a3e" }}>
+              <div style={{ fontSize: "48px", marginBottom: "16px" }}>🎞</div>
+              <p style={{ fontSize: "14px" }}>Your watchlist is empty.</p>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: "16px" }}>
+              {displayMovies.map((m, i) => (
+                <div key={m._id} style={{ animation: `fadeUp 0.4s ease both`, animationDelay: `${i * 0.04}s` }}>
+                  <MovieCard movie={m} token={token} onWatchlist={handleWatchlist} inWatchlist={watchlist.includes(m._id)} onSelect={m => setSelectedMovieId(m._id)} />
+                </div>
+              ))}
+            </div>
+          )
         ) : displayMovies.length === 0 ? (
           <div style={{ textAlign: "center", padding: "80px 0", color: "#6b5a3e" }}>
             <div style={{ fontSize: "48px", marginBottom: "16px" }}>🎞</div>
-            <p style={{ fontSize: "14px" }}>{activeTab === "watchlist" ? "Your watchlist is empty." : "No films found."}</p>
+            <p style={{ fontSize: "14px" }}>No films found.</p>
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: "16px" }}>
