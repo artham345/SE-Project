@@ -1,10 +1,18 @@
-// ─── server/server.js ─── Full MERN Authentication + Movies Backend ──────────
+// ─── server/server.js ─── Theatron API with KMP + Dynamic Programming ────────
 const express = require("express");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 require("dotenv").config();
+
+const {
+  movieRelevanceScore,
+  kmpContains,
+  editDistance,
+  knapsackRecommend,
+  lcsLength,
+} = require("./algorithms");
 
 const app = express();
 app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:3000" }));
@@ -49,20 +57,23 @@ userSchema.methods.toSafeObject = function () {
 const User = mongoose.model("User", userSchema);
 
 // ─── Movie Schema ─────────────────────────────────────────────────────────────
-const movieSchema = new mongoose.Schema({
-  title: String,
-  year: Number,
-  genre: [String],
-  rating: Number,
-  score: Number,
-  director: String,
-  cast: [String],
-  description: String,
-  poster: String,
-  duration: Number,
-  language: String,
-  featured: Boolean,
-}, { timestamps: true });
+const movieSchema = new mongoose.Schema(
+  {
+    title: String,
+    year: Number,
+    genre: [String],
+    rating: Number,
+    score: Number,
+    director: String,
+    cast: [String],
+    description: String,
+    poster: String,
+    duration: Number,
+    language: String,
+    featured: Boolean,
+  },
+  { timestamps: true }
+);
 
 const Movie = mongoose.model("Movie", movieSchema);
 
@@ -89,11 +100,13 @@ const authenticate = async (req, res, next) => {
   }
 };
 
-const authorize = (...roles) => (req, res, next) => {
-  if (!roles.includes(req.user.role))
-    return res.status(403).json({ message: `Requires role: ${roles.join(" | ")}` });
-  next();
-};
+const authorize =
+  (...roles) =>
+  (req, res, next) => {
+    if (!roles.includes(req.user.role))
+      return res.status(403).json({ message: `Requires role: ${roles.join(" | ")}` });
+    next();
+  };
 
 const validateEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
@@ -116,7 +129,12 @@ app.post("/api/auth/register", async (req, res) => {
     user.refreshTokens = [refreshToken];
     await user.save();
 
-    res.status(201).json({ message: "Account created", accessToken, refreshToken, user: user.toSafeObject() });
+    res.status(201).json({
+      message: "Account created",
+      accessToken,
+      refreshToken,
+      user: user.toSafeObject(),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -154,7 +172,9 @@ app.post("/api/auth/refresh", async (req, res) => {
       return res.status(403).json({ message: "Invalid refresh token" });
     const newAccess = signAccess({ id: user._id, role: user.role });
     const newRefresh = signRefresh({ id: user._id });
-    user.refreshTokens = user.refreshTokens.filter(t => t !== refreshToken).concat(newRefresh);
+    user.refreshTokens = user.refreshTokens
+      .filter((t) => t !== refreshToken)
+      .concat(newRefresh);
     await user.save();
     res.json({ accessToken: newAccess, refreshToken: newRefresh });
   } catch {
@@ -172,32 +192,104 @@ app.get("/api/auth/me", authenticate, (req, res) => res.json({ user: req.user })
 
 // ─── Movie Routes ─────────────────────────────────────────────────────────────
 
-// GET all movies with filtering, search, sort, pagination (public)
+/**
+ * GET /api/movies
+ * Filtering, search, sort, pagination.
+ *
+ * Search flow (when ?search= is provided):
+ *   1. Fetch all movies matching the genre filter from MongoDB.
+ *   2. Run KMP to find which movies contain ANY search term in title,
+ *      director, cast, genre, or description — O(n·k) total.
+ *   3. Score and rank by relevance (movieRelevanceScore).
+ *   4. Fuzzy fallback: if KMP finds nothing, use Levenshtein edit distance
+ *      against movie titles and suggest the closest match.
+ *   5. Paginate the KMP-ranked results in-memory.
+ */
 app.get("/api/movies", async (req, res) => {
   try {
-    const { genre, search, sort = "rating", order = "desc", page = 1, limit = 12 } = req.query;
-    const filter = {};
+    const {
+      genre,
+      search,
+      sort = "rating",
+      order = "desc",
+      page = 1,
+      limit = 12,
+      fuzzy = "false",
+    } = req.query;
 
-    // genre is stored as an array in MongoDB, so use $in to match any movie
-    // whose genre array contains the requested genre string (case-insensitive)
+    const filter = {};
     if (genre && genre !== "All") {
       filter.genre = { $in: [new RegExp(`^${genre}$`, "i")] };
     }
 
-    // search by title (case-insensitive partial match)
-    if (search && search.trim()) {
-      filter.title = { $regex: search.trim(), $options: "i" };
-    }
-
-    // whitelist sortable fields to prevent injection
     const allowedSort = ["rating", "score", "year", "title"];
     const sortField = allowedSort.includes(sort) ? sort : "rating";
     const sortObj = { [sortField]: order === "asc" ? 1 : -1 };
 
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
-    const skip = (pageNum - 1) * limitNum;
 
+    // ── KMP Search path ─────────────────────────────────────────────────────
+    if (search && search.trim()) {
+      // Fetch all candidates matching genre filter (no text filter in DB)
+      const allMovies = await Movie.find(filter).sort(sortObj);
+
+      // KMP: keep only movies that match the search in any field
+      const query = search.trim();
+      const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+
+      let matched = allMovies.filter((movie) =>
+        terms.some(
+          (term) =>
+            kmpContains(movie.title || "", term) ||
+            kmpContains(movie.director || "", term) ||
+            kmpContains((movie.cast || []).join(" "), term) ||
+            kmpContains((movie.genre || []).join(" "), term) ||
+            kmpContains(movie.description || "", term)
+        )
+      );
+
+      // ── Fuzzy fallback (Levenshtein DP) ──────────────────────────────────
+      let fuzzyMatch = null;
+      if (matched.length === 0) {
+        // Find the movie whose title has the smallest edit distance
+        let bestDist = Infinity;
+        let bestMovie = null;
+        for (const movie of allMovies) {
+          const dist = editDistance(movie.title, query);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestMovie = movie;
+          }
+        }
+        // Only suggest if reasonably close (distance ≤ 40% of query length)
+        const threshold = Math.ceil(query.length * 0.4);
+        if (bestMovie && bestDist <= threshold) {
+          fuzzyMatch = { title: bestMovie.title, distance: bestDist };
+          matched = [bestMovie];
+        }
+      }
+
+      // Rank by KMP relevance score (highest first)
+      matched.sort((a, b) => movieRelevanceScore(b, query) - movieRelevanceScore(a, query));
+
+      const total = matched.length;
+      const skip = (pageNum - 1) * limitNum;
+      const movies = matched.slice(skip, skip + limitNum);
+
+      return res.json({
+        movies,
+        total,
+        page: pageNum,
+        pages: Math.ceil(total / limitNum),
+        genre: genre || "All",
+        searchAlgorithm: "KMP",
+        ...(fuzzyMatch && { fuzzyMatch }),
+      });
+    }
+
+    // ── Standard DB path (no search query) ──────────────────────────────────
+    const skip = (pageNum - 1) * limitNum;
     const [movies, total] = await Promise.all([
       Movie.find(filter).sort(sortObj).skip(skip).limit(limitNum),
       Movie.countDocuments(filter),
@@ -221,6 +313,85 @@ app.get("/api/movies/featured", async (req, res) => {
   try {
     const movies = await Movie.find({ featured: true }).limit(5);
     res.json({ movies });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/**
+ * GET /api/movies/recommend
+ * Personalised recommendations using Dynamic Programming (Knapsack + LCS).
+ *
+ * Algorithm:
+ *   1. Fetch the authenticated user's watchlist to derive their genre preferences.
+ *   2. LCS compares each candidate movie's genre array against user preferences
+ *      to compute a similarity score.
+ *   3. Knapsack DP selects the top-N unwatched movies that maximise total
+ *      genre-similarity + critic score within the result-count budget.
+ *
+ * Requires authentication.
+ */
+app.get("/api/movies/recommend", authenticate, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    const maxResults = Math.min(20, Math.max(1, parseInt(limit)));
+
+    const user = await User.findById(req.user._id).populate("watchlist");
+
+    // Build user genre preference from watchlist + favoriteGenres
+    const watchlistGenres = user.watchlist.flatMap((m) => m.genre || []);
+    const userGenres = [...new Set([...watchlistGenres, ...(user.favoriteGenres || [])])];
+
+    if (userGenres.length === 0) {
+      // Cold start: just return top-rated movies
+      const movies = await Movie.find().sort({ rating: -1 }).limit(maxResults);
+      return res.json({ movies, algorithm: "top-rated (cold start)", userGenres: [] });
+    }
+
+    // Exclude movies already in watchlist
+    const watchedIds = new Set(user.watchlist.map((m) => m._id.toString()));
+    const candidates = await Movie.find({ _id: { $nin: [...watchedIds] } });
+
+    // Knapsack DP — pick best movies
+    const recommended = knapsackRecommend(candidates, userGenres, maxResults);
+
+    res.json({
+      movies: recommended,
+      algorithm: "Knapsack DP + LCS genre similarity",
+      userGenres,
+      candidatesConsidered: candidates.length,
+    });
+  } catch (err) {
+    console.error("Recommend error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/**
+ * GET /api/movies/similar/:id
+ * Finds movies similar to the given one using LCS on genre arrays.
+ * Sorts all other movies by descending LCS genre overlap + rating.
+ */
+app.get("/api/movies/similar/:id", async (req, res) => {
+  try {
+    const base = await Movie.findById(req.params.id);
+    if (!base) return res.status(404).json({ message: "Movie not found" });
+
+    const limit = Math.min(20, Math.max(1, parseInt(req.query.limit || 6)));
+    const others = await Movie.find({ _id: { $ne: base._id } });
+
+    const scored = others.map((m) => {
+      const overlap = lcsLength(base.genre || [], m.genre || []);
+      return {
+        movie: m,
+        similarity: overlap * 10 + (m.rating || 0),
+      };
+    });
+
+    scored.sort((a, b) => b.similarity - a.similarity);
+    const movies = scored.slice(0, limit).map((s) => s.movie);
+
+    res.json({ movies, baseGenres: base.genre, algorithm: "LCS genre similarity" });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
@@ -254,7 +425,7 @@ app.post("/api/movies/:id/watchlist", authenticate, async (req, res) => {
     const movieId = req.params.id;
     const inList = user.watchlist.map(String).includes(movieId);
     if (inList) {
-      user.watchlist = user.watchlist.filter(id => id.toString() !== movieId);
+      user.watchlist = user.watchlist.filter((id) => id.toString() !== movieId);
     } else {
       user.watchlist.push(movieId);
     }
