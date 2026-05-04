@@ -700,6 +700,516 @@ function RecommendationsTab({ allMovies, watchlistIds, token, onWatchlist, watch
   );
 }
 
+// ─── Stats Tab ────────────────────────────────────────────────────────────────
+function StatsTab({ allMovies, watchlistIds }) {
+  if (!allMovies.length) return (
+    <div style={{ textAlign: "center", padding: "80px 0", color: "#6b5a3e" }}>
+      <div style={{ fontSize: "48px", marginBottom: "16px" }}>◫</div>
+      <p style={{ fontSize: "14px" }}>No data yet.</p>
+    </div>
+  );
+
+  // ── Compute everything ──
+  const total       = allMovies.length;
+  const avgRating   = allMovies.reduce((s, m) => s + m.rating, 0) / total;
+  const avgDuration = allMovies.reduce((s, m) => s + (m.duration || 0), 0) / total;
+  const totalHours  = Math.round(allMovies.reduce((s, m) => s + (m.duration || 0), 0) / 60);
+  const topRated    = [...allMovies].sort((a, b) => b.rating - a.rating).slice(0, 5);
+  const newest      = [...allMovies].sort((a, b) => b.year - a.year)[0];
+  const oldest      = [...allMovies].sort((a, b) => a.year - b.year)[0];
+
+  // Genre breakdown
+  const genreMap = {};
+  allMovies.forEach(m => {
+    (m.genre || []).forEach(g => {
+      if (!genreMap[g]) genreMap[g] = { count: 0, totalRating: 0, totalDuration: 0 };
+      genreMap[g].count++;
+      genreMap[g].totalRating   += m.rating || 0;
+      genreMap[g].totalDuration += m.duration || 0;
+    });
+  });
+  const genres = Object.entries(genreMap)
+    .map(([g, d]) => ({ genre: g, count: d.count, avgRating: d.totalRating / d.count, avgDuration: Math.round(d.totalDuration / d.count) }))
+    .sort((a, b) => b.count - a.count);
+  const maxCount = genres[0]?.count || 1;
+  const maxRating = Math.max(...genres.map(g => g.avgRating));
+
+  // Director breakdown
+  const dirMap = {};
+  allMovies.forEach(m => {
+    if (!m.director) return;
+    if (!dirMap[m.director]) dirMap[m.director] = { count: 0, totalRating: 0 };
+    dirMap[m.director].count++;
+    dirMap[m.director].totalRating += m.rating || 0;
+  });
+  const directors = Object.entries(dirMap)
+    .map(([d, v]) => ({ director: d, count: v.count, avgRating: v.totalRating / v.count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 8);
+
+  // Year distribution (decade buckets)
+  const decadeMap = {};
+  allMovies.forEach(m => {
+    if (!m.year) return;
+    const decade = Math.floor(m.year / 10) * 10;
+    decadeMap[decade] = (decadeMap[decade] || 0) + 1;
+  });
+  const decades = Object.entries(decadeMap).sort((a, b) => a[0] - b[0]);
+  const maxDecade = Math.max(...decades.map(d => d[1]));
+
+  // Rating distribution (0.5 buckets)
+  const ratingBuckets = {};
+  for (let r = 5; r <= 10; r += 0.5) ratingBuckets[r.toFixed(1)] = 0;
+  allMovies.forEach(m => {
+    const bucket = (Math.round(m.rating * 2) / 2).toFixed(1);
+    if (ratingBuckets[bucket] !== undefined) ratingBuckets[bucket]++;
+  });
+  const ratingEntries = Object.entries(ratingBuckets);
+  const maxRatingCount = Math.max(...Object.values(ratingBuckets), 1);
+
+  // Watchlist stats
+  const wlMovies      = allMovies.filter(m => watchlistIds.includes(m._id));
+  const wlAvgRating   = wlMovies.length ? wlMovies.reduce((s, m) => s + m.rating, 0) / wlMovies.length : 0;
+  const wlTotalTime   = wlMovies.reduce((s, m) => s + (m.duration || 0), 0);
+
+  // ── Sub-components ──
+  const SectionHead = ({ title, sub }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "20px", marginTop: "40px" }}>
+      <div style={{ width: "3px", height: "24px", background: "linear-gradient(180deg,#d4a842,#8a6820)", borderRadius: "2px" }} />
+      <div>
+        <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "20px", fontWeight: 300, color: "#f0e6d3", margin: 0 }}>{title}</h2>
+        {sub && <p style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", margin: "3px 0 0", letterSpacing: "0.08em" }}>{sub}</p>}
+      </div>
+    </div>
+  );
+
+  const StatCard = ({ value, label, sub }) => (
+    <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(160,135,90,0.12)", borderRadius: "12px", padding: "22px 24px", flex: 1, minWidth: "120px" }}>
+      <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "38px", fontWeight: 300, color: "#d4a842", lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.12em", textTransform: "uppercase", marginTop: "7px" }}>{label}</div>
+      {sub && <div style={{ fontSize: "11px", color: "#4a3e2e", marginTop: "4px", fontFamily: "'DM Mono',monospace" }}>{sub}</div>}
+    </div>
+  );
+
+  const Bar = ({ pct, color = "#d4a842", height = 6 }) => (
+    <div style={{ height: `${height}px`, background: "rgba(255,255,255,0.05)", borderRadius: "3px", overflow: "hidden", marginTop: "8px" }}>
+      <div style={{ height: "100%", width: `${Math.min(100, pct)}%`, background: `linear-gradient(90deg,${color}88,${color})`, borderRadius: "3px", transition: "width 0.8s cubic-bezier(0.4,0,0.2,1)" }} />
+    </div>
+  );
+
+  return (
+    <div>
+      {/* ── Hero summary row ── */}
+      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "8px" }}>
+        <StatCard value={133}                       label="Total Films" />
+        <StatCard value={avgRating.toFixed(1)}        label="Avg IMDb Rating" />
+        <StatCard value={`${Math.round(avgDuration)}m`} label="Avg Duration" />
+        <StatCard value={`${totalHours}h`}            label="Total Runtime" sub={`≈ ${Math.round(totalHours/24)} days`} />
+        <StatCard value={genres.length}               label="Genres" />
+      </div>
+
+      {/* ── Watchlist callout (only if they have one) ── */}
+      {wlMovies.length > 0 && (
+        <div style={{ marginTop: "16px", padding: "20px 24px", background: "rgba(212,168,66,0.05)", border: "1px solid rgba(212,168,66,0.12)", borderRadius: "12px", display: "flex", gap: "32px", flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.12em", textTransform: "uppercase" }}>Your Watchlist</div>
+          {[
+            { v: wlMovies.length,              l: "Films saved" },
+            { v: wlAvgRating.toFixed(1),       l: "Avg rating" },
+            { v: `${Math.round(wlTotalTime/60)}h`, l: "Total watch time" },
+          ].map(({ v, l }) => (
+            <div key={l}>
+              <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "26px", color: "#d4a842", lineHeight: 1 }}>{v}</div>
+              <div style={{ fontSize: "10px", color: "#4a3e2e", fontFamily: "'DM Mono',monospace", marginTop: "3px" }}>{l}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Genre Breakdown ── */}
+      <SectionHead title="Genre Breakdown" sub={`${genres.length} GENRES ACROSS ${total} FILMS`} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "12px" }}>
+        {genres.map(({ genre, count, avgRating: ar, avgDuration: ad }) => (
+          <div key={genre} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(160,135,90,0.1)", borderRadius: "10px", padding: "16px 18px", transition: "border-color 0.2s" }}
+            onMouseEnter={e => e.currentTarget.style.borderColor = "rgba(212,168,66,0.3)"}
+            onMouseLeave={e => e.currentTarget.style.borderColor = "rgba(160,135,90,0.1)"}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
+              <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "17px", color: "#f0e6d3" }}>{genre}</span>
+              <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "22px", color: "#d4a842", lineHeight: 1 }}>{count}</span>
+            </div>
+            {/* Films bar */}
+            <Bar pct={(count / maxCount) * 100} color="#d4a842" height={4} />
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px" }}>
+              <div>
+                <div style={{ fontSize: "9px", color: "#4a3e2e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.1em" }}>AVG RATING</div>
+                <div style={{ fontSize: "14px", color: "#a0875a", fontFamily: "'Cormorant Garamond',serif" }}>{ar.toFixed(1)}</div>
+                <Bar pct={(ar / maxRating) * 100} color="#a0875a" height={3} />
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: "9px", color: "#4a3e2e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.1em" }}>AVG DURATION</div>
+                <div style={{ fontSize: "14px", color: "#a0875a", fontFamily: "'Cormorant Garamond',serif" }}>{ad} min</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Rating Distribution ── */}
+      <SectionHead title="Rating Distribution" sub="IMDB RATINGS · BINNED BY 0.5" />
+      <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(160,135,90,0.1)", borderRadius: "12px", padding: "28px 24px" }}>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: "6px", height: "120px" }}>
+          {ratingEntries.map(([bucket, count]) => {
+            const pct = (count / maxRatingCount) * 100;
+            return (
+              <div key={bucket} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "6px", height: "100%" }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "flex-end", width: "100%" }}>
+                  <div
+                    title={`${bucket}: ${count} film${count !== 1 ? "s" : ""}`}
+                    style={{
+                      width: "100%", height: `${Math.max(pct, count > 0 ? 4 : 0)}%`,
+                      background: count > 0 ? "linear-gradient(180deg,#d4a842,#8a6820)" : "rgba(255,255,255,0.04)",
+                      borderRadius: "3px 3px 0 0", transition: "height 0.6s ease",
+                      cursor: count > 0 ? "default" : "default",
+                      opacity: count > 0 ? 1 : 0.3,
+                    }}
+                  />
+                </div>
+                {count > 0 && <span style={{ fontSize: "9px", color: "#d4a842", fontFamily: "'DM Mono',monospace", fontWeight: 600 }}>{count}</span>}
+                <span style={{ fontSize: "9px", color: "#4a3e2e", fontFamily: "'DM Mono',monospace", transform: "rotate(-45deg)", transformOrigin: "top right", whiteSpace: "nowrap", marginTop: "2px" }}>{bucket}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Decade Distribution ── */}
+      <SectionHead title="Films by Decade" sub="RELEASE YEAR DISTRIBUTION" />
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        {decades.map(([decade, count]) => (
+          <div key={decade} style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            <span style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "16px", color: "#a0875a", minWidth: "50px" }}>{decade}s</span>
+            <div style={{ flex: 1, height: "28px", background: "rgba(255,255,255,0.03)", borderRadius: "4px", overflow: "hidden", position: "relative" }}>
+              <div style={{ height: "100%", width: `${(count / maxDecade) * 100}%`, background: "linear-gradient(90deg, rgba(212,168,66,0.25), rgba(212,168,66,0.6))", borderRadius: "4px", transition: "width 0.8s ease" }} />
+              <span style={{ position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)", fontSize: "11px", color: "#d4a842", fontFamily: "'DM Mono',monospace" }}>{count} film{count !== 1 ? "s" : ""}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Top Directors ── */}
+      <SectionHead title="Top Directors" sub="BY FILM COUNT" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "10px" }}>
+        {directors.map(({ director, count: dc, avgRating: dar }, i) => (
+          <div key={director} style={{ display: "flex", alignItems: "center", gap: "14px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(160,135,90,0.1)", borderRadius: "10px", padding: "14px 16px" }}>
+            <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "22px", color: "#3a3020", fontWeight: 600, minWidth: "28px", textAlign: "right" }}>{String(i + 1).padStart(2, "0")}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: "13px", color: "#f0e6d3", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: "4px" }}>{director}</div>
+              <div style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace" }}>{dc} film{dc !== 1 ? "s" : ""} · {dar.toFixed(1)} avg</div>
+              <Bar pct={(dc / directors[0].count) * 100} color="#d4a842" height={2} />
+            </div>
+            <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "24px", color: "#d4a842", flexShrink: 0 }}>{dar.toFixed(1)}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Top 5 Rated ── */}
+      <SectionHead title="Top 5 Rated" sub="HIGHEST IMDB RATINGS IN THE COLLECTION" />
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        {topRated.map((m, i) => {
+          const pct = (m.rating / 10) * 100;
+          return (
+            <div key={m._id} style={{ display: "flex", alignItems: "center", gap: "16px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(160,135,90,0.1)", borderRadius: "10px", padding: "14px 18px" }}>
+              <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "28px", color: i === 0 ? "#d4a842" : "#3a3020", fontWeight: 600, minWidth: "32px", textAlign: "right" }}>{i + 1}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "16px", color: "#f0e6d3", marginBottom: "4px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.title}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                  <span style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace" }}>{m.year}</span>
+                  <span style={{ fontSize: "10px", color: "#3a3020" }}>·</span>
+                  <span style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace" }}>{(m.genre || []).join(", ")}</span>
+                </div>
+                <Bar pct={pct} color={i === 0 ? "#d4a842" : "#8a6820"} height={3} />
+              </div>
+              <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "28px", color: "#d4a842", fontWeight: 600, flexShrink: 0 }}>{m.rating.toFixed(1)}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Quick facts row ── */}
+      <SectionHead title="Collection Trivia" sub="" />
+      <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "48px" }}>
+        {[
+          { v: newest?.title,  l: "Most Recent",  s: newest?.year },
+          { v: oldest?.title,  l: "Oldest Film",  s: oldest?.year },
+          { v: [...allMovies].sort((a,b)=>b.rating-a.rating)[0]?.title, l: "Highest Rated", s: [...allMovies].sort((a,b)=>b.rating-a.rating)[0]?.rating.toFixed(1) },
+          { v: [...allMovies].sort((a,b)=>(b.duration||0)-(a.duration||0))[0]?.title, l: "Longest Film", s: `${[...allMovies].sort((a,b)=>(b.duration||0)-(a.duration||0))[0]?.duration} min` },
+          { v: [...allMovies].sort((a,b)=>(a.duration||0)-(b.duration||0)).filter(m=>m.duration>0)[0]?.title, l: "Shortest Film", s: `${[...allMovies].sort((a,b)=>(a.duration||0)-(b.duration||0)).filter(m=>m.duration>0)[0]?.duration} min` },
+        ].map(({ v, l, s }) => (
+          <div key={l} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(160,135,90,0.1)", borderRadius: "10px", padding: "16px 18px", flex: "1 1 160px" }}>
+            <div style={{ fontSize: "9px", color: "#4a3e2e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: "6px" }}>{l}</div>
+            <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "15px", color: "#f0e6d3", lineHeight: 1.3, marginBottom: "4px" }}>{v}</div>
+            <div style={{ fontSize: "11px", color: "#d4a842", fontFamily: "'DM Mono',monospace" }}>{s}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Algorithms (mirrored from server, runs client-side on loaded movies) ─────
+
+function similarity(a, b) {
+  let s = 0;
+  const aGenres = a.genre || [];
+  const bGenres = b.genre || [];
+  const sharedGenres = aGenres.filter(g => bGenres.includes(g)).length;
+  s += sharedGenres * 4.0;
+  if (a.director && a.director === b.director) s += 3.0;
+  if (Math.abs(a.year - b.year) <= 5) s += 1.5;
+  if (Math.abs(a.rating - b.rating) <= 0.5) s += 1.5;
+  // cast overlap
+  const aCast = a.cast || [];
+  const bCast = b.cast || [];
+  s += aCast.filter(c => bCast.includes(c)).length * 2.0;
+  return s;
+}
+
+function knapsack(movies, budget) {
+  const n = movies.length;
+  const dp = Array.from({ length: n + 1 }, () => new Int32Array(budget + 1));
+  for (let i = 1; i <= n; i++) {
+    const dur = movies[i - 1].duration || 0;
+    const val = Math.round((movies[i - 1].rating || 0) * 10);
+    for (let t = 0; t <= budget; t++) {
+      dp[i][t] = dp[i - 1][t];
+      if (dur <= t) {
+        const w = val + dp[i - 1][t - dur];
+        if (w > dp[i][t]) dp[i][t] = w;
+      }
+    }
+  }
+  const selected = [];
+  let rem = budget;
+  for (let i = n; i >= 1; i--) {
+    if (dp[i][rem] !== dp[i - 1][rem]) {
+      selected.push(movies[i - 1]);
+      rem -= movies[i - 1].duration;
+    }
+  }
+  return selected.reverse();
+}
+
+function similarityRecs(seedMovies, allMovies, n = 8) {
+  if (!seedMovies.length) return [];
+  const seedIds = new Set(seedMovies.map(m => m._id));
+  const scoreMap = {};
+  seedMovies.forEach(seed => {
+    allMovies.forEach(m => {
+      if (seedIds.has(m._id)) return;
+      const s = similarity(seed, m);
+      if (s > 0) scoreMap[m._id] = (scoreMap[m._id] || 0) + s;
+    });
+  });
+  return Object.entries(scoreMap)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([id]) => allMovies.find(m => m._id === id))
+    .filter(Boolean);
+}
+
+// ─── Time Planner Tab ─────────────────────────────────────────────────────────
+const TIME_PRESETS = [
+  { label: "Quick Watch", icon: "☕", minutes: 90,  desc: "~90 min" },
+  { label: "One Film",    icon: "🎬", minutes: 150, desc: "~2.5 hrs" },
+  { label: "Movie Night", icon: "🌙", minutes: 300, desc: "~5 hrs" },
+  { label: "Full Day",    icon: "🛋️", minutes: 480, desc: "~8 hrs" },
+];
+
+function TimePlannerTab({ allMovies, watchlistIds, token, onWatchlist, watchlist, onSelect }) {
+  const [budget, setBudget]     = useState(150);
+  const [preset, setPreset]     = useState(1);  // index into TIME_PRESETS, -1 = custom
+  const [mode, setMode]         = useState("rating"); // "rating" | "watchlist" | "short"
+  const [customVal, setCustomVal] = useState(150);
+
+  const handlePreset = (idx) => {
+    setPreset(idx);
+    setBudget(TIME_PRESETS[idx].minutes);
+  };
+  const handleCustom = (v) => {
+    setPreset(-1);
+    setCustomVal(v);
+    setBudget(v);
+  };
+
+  // Build the pool according to mode
+  const pool = (() => {
+    if (mode === "watchlist" && watchlistIds.length) {
+      const wl  = allMovies.filter(m => watchlistIds.includes(m._id));
+      const rest = allMovies.filter(m => !watchlistIds.includes(m._id));
+      return [...wl, ...rest];
+    }
+    if (mode === "short") return [...allMovies].sort((a, b) => (a.duration || 0) - (b.duration || 0));
+    return allMovies; // default: knapsack maximises rating
+  })();
+
+  const selected   = knapsack(pool, budget);
+  const usedTime   = selected.reduce((s, m) => s + (m.duration || 0), 0);
+  const remaining  = budget - usedTime;
+  const avgRating  = selected.length
+    ? (selected.reduce((s, m) => s + m.rating, 0) / selected.length).toFixed(1)
+    : "—";
+
+  // Similarity-based recs seeded from selected films, filtered to fit budget
+  const seedMovies    = selected.length ? selected : allMovies.filter(m => watchlistIds.includes(m._id));
+  const simRecs       = similarityRecs(seedMovies, allMovies, 8).filter(m => (m.duration || 0) <= budget);
+
+  const SummaryCard = ({ num, label }) => (
+    <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(160,135,90,0.12)", borderRadius: "10px", padding: "20px 24px", textAlign: "center", flex: 1 }}>
+      <div style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "36px", fontWeight: 300, color: "#d4a842", lineHeight: 1 }}>{num}</div>
+      <div style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.12em", textTransform: "uppercase", marginTop: "6px" }}>{label}</div>
+    </div>
+  );
+
+  const ModeBtn = ({ id, label }) => (
+    <button
+      onClick={() => setMode(id)}
+      style={{
+        padding: "7px 16px", borderRadius: "6px", cursor: "pointer", fontSize: "11px",
+        fontFamily: "'DM Mono',monospace", letterSpacing: "0.06em", transition: "all 0.2s",
+        background: mode === id ? "rgba(212,168,66,0.12)" : "rgba(255,255,255,0.03)",
+        border: `1px solid ${mode === id ? "rgba(212,168,66,0.45)" : "rgba(160,135,90,0.15)"}`,
+        color: mode === id ? "#d4a842" : "#6b5a3e",
+      }}
+    >{label}</button>
+  );
+
+  return (
+    <div>
+      {/* ── Panel ── */}
+      <div style={{ background: "rgba(255,255,255,0.015)", border: "1px solid rgba(160,135,90,0.12)", borderRadius: "14px", padding: "28px 32px", marginBottom: "32px", position: "relative", overflow: "hidden" }}>
+        
+
+        <p style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "20px", fontWeight: 300, color: "#f0e6d3", marginBottom: "20px" }}>How much time do you have?</p>
+
+        {/* Presets */}
+        <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "20px" }}>
+          {TIME_PRESETS.map((p, i) => (
+            <button
+              key={i}
+              onClick={() => handlePreset(i)}
+              style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: "4px",
+                padding: "14px 20px", borderRadius: "10px", cursor: "pointer", minWidth: "100px",
+                transition: "all 0.2s",
+                background: preset === i ? "rgba(212,168,66,0.1)" : "rgba(255,255,255,0.03)",
+                border: `1px solid ${preset === i ? "rgba(212,168,66,0.45)" : "rgba(160,135,90,0.14)"}`,
+              }}
+            >
+              <span style={{ fontSize: "22px" }}>{p.icon}</span>
+              <span style={{ fontSize: "12px", color: preset === i ? "#d4a842" : "#a0875a", fontFamily: "'DM Mono',monospace" }}>{p.label}</span>
+              <span style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace" }}>{p.desc}</span>
+            </button>
+          ))}
+          {/* Custom */}
+          <button
+            onClick={() => handleCustom(customVal)}
+            style={{
+              display: "flex", flexDirection: "column", alignItems: "center", gap: "4px",
+              padding: "14px 20px", borderRadius: "10px", cursor: "pointer", minWidth: "100px",
+              transition: "all 0.2s",
+              background: preset === -1 ? "rgba(212,168,66,0.1)" : "rgba(255,255,255,0.03)",
+              border: `1px solid ${preset === -1 ? "rgba(212,168,66,0.45)" : "rgba(160,135,90,0.14)"}`,
+            }}
+          >
+            <span style={{ fontSize: "22px" }}>⧗</span>
+            <span style={{ fontSize: "12px", color: preset === -1 ? "#d4a842" : "#a0875a", fontFamily: "'DM Mono',monospace" }}>Custom</span>
+            <span style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace" }}>set exact</span>
+          </button>
+        </div>
+
+        {/* Custom slider */}
+        {preset === -1 && (
+          <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "20px" }}>
+            <span style={{ fontSize: "11px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", minWidth: "60px" }}>Minutes</span>
+            <input
+              type="range" min="30" max="720" step="10" value={customVal}
+              onChange={e => handleCustom(Number(e.target.value))}
+              style={{ flex: 1, accentColor: "#d4a842", cursor: "pointer" }}
+            />
+            <span style={{ fontSize: "16px", color: "#d4a842", fontFamily: "'Cormorant Garamond',serif", minWidth: "70px", textAlign: "right" }}>{customVal} min</span>
+          </div>
+        )}
+
+        {/* Priority mode */}
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "10px", color: "#4a3e2e", fontFamily: "'DM Mono',monospace", letterSpacing: "0.1em", textTransform: "uppercase" }}>Prioritise</span>
+          <ModeBtn id="rating"    label="Highest Rated" />
+          <ModeBtn id="short"     label="Shortest First" />
+        </div>
+      </div>
+
+      {/* ── Summary ── */}
+      <div style={{ display: "flex", gap: "12px", marginBottom: "28px", flexWrap: "wrap" }}>
+        <SummaryCard num={selected.length} label="Films selected" />
+        <SummaryCard num={`${usedTime} min`} label="Time used" />
+        <SummaryCard num={`${remaining} min`} label="Time free" />
+        <SummaryCard num={avgRating} label="Avg rating" />
+      </div>
+
+      {/* ── Knapsack Selection ── */}
+      <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "20px" }}>
+        <div style={{ width: "3px", height: "24px", background: "linear-gradient(180deg,#d4a842,#8a6820)", borderRadius: "2px" }} />
+        <div>
+          <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "20px", fontWeight: 300, color: "#f0e6d3", margin: 0 }}>Optimal Selection</h2>
+          <p style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", margin: "3px 0 0", letterSpacing: "0.08em" }}>· {selected.length} FILM{selected.length !== 1 ? "S" : ""} · {usedTime} MIN</p>
+        </div>
+      </div>
+
+      {selected.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "48px 0", color: "#6b5a3e" }}>
+          <p style={{ fontSize: "14px" }}>No films fit in this window — try a longer time budget.</p>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: "16px", marginBottom: "40px" }}>
+          {selected.map((m, i) => (
+            <div key={m._id} style={{ animation: "fadeUp 0.4s ease both", animationDelay: `${i * 0.04}s` }}>
+              <MovieCard movie={m} token={token} onWatchlist={onWatchlist} inWatchlist={watchlist.includes(m._id)} onSelect={onSelect} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Similarity Suggestions ── */}
+      {simRecs.length > 0 && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "20px" }}>
+            <div style={{ width: "3px", height: "24px", background: "linear-gradient(180deg,#a0875a,#6b5a3e)", borderRadius: "2px" }} />
+            <div>
+              <h2 style={{ fontFamily: "'Cormorant Garamond',serif", fontSize: "20px", fontWeight: 300, color: "#f0e6d3", margin: 0 }}>You Might Also Like</h2>
+              <p style={{ fontSize: "10px", color: "#6b5a3e", fontFamily: "'DM Mono',monospace", margin: "3px 0 0", letterSpacing: "0.08em" }}>SIMILARITY SCORE · FITS IN YOUR WINDOW</p>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))", gap: "16px" }}>
+            {simRecs.map((m, i) => (
+              <div key={m._id} style={{ animation: "fadeUp 0.4s ease both", animationDelay: `${i * 0.04}s`, position: "relative" }}>
+                <div style={{
+                  position: "absolute", top: "-7px", left: "50%", transform: "translateX(-50%)",
+                  zIndex: 10, background: "linear-gradient(90deg,#6b5a3e,#a0875a)",
+                  borderRadius: "20px", padding: "2px 10px", fontSize: "9px",
+                  color: "#f0e6d3", fontFamily: "'DM Mono',monospace", fontWeight: 700,
+                  letterSpacing: "0.08em", whiteSpace: "nowrap",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
+                }}>◎ SIMILAR</div>
+                <MovieCard movie={m} token={token} onWatchlist={onWatchlist} inWatchlist={watchlist.includes(m._id)} onSelect={onSelect} />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 function Dashboard({ user, token, onLogout }) {
   const [movies, setMovies] = useState([]);
@@ -804,6 +1314,8 @@ function Dashboard({ user, token, onLogout }) {
             { key: "all", label: "All Films" },
             { key: "watchlist", label: `Watchlist (${watchlist.length})` },
             { key: "recommended", label: "✦ For You" },
+            { key: "timeplanner", label: "⧗ Time Planner" },
+            { key: "stats", label: "◫ Statistics" },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -840,7 +1352,7 @@ function Dashboard({ user, token, onLogout }) {
         </div>
 
         {/* ── Controls ── */}
-        {activeTab !== "recommended" && (<>
+        {activeTab !== "recommended" && activeTab !== "timeplanner" && activeTab !== "stats" && (<>
           <div style={{ display: "flex", gap: "12px", marginBottom: "20px", flexWrap: "wrap", alignItems: "center" }}>
             {/* Search */}
             <div style={{ position: "relative", flex: "1 1 240px" }}>
@@ -898,6 +1410,17 @@ function Dashboard({ user, token, onLogout }) {
             <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#d4a842", animation: "pulse 1s ease-in-out infinite" }} />
             <span style={{ color: "#6b5a3e", fontSize: "13px" }}>Loading films…</span>
           </div>
+        ) : activeTab === "stats" ? (
+          <StatsTab allMovies={movies} watchlistIds={watchlist} />
+        ) : activeTab === "timeplanner" ? (
+          <TimePlannerTab
+            allMovies={movies}
+            watchlistIds={watchlist}
+            token={token}
+            onWatchlist={handleWatchlist}
+            watchlist={watchlist}
+            onSelect={m => setSelectedMovieId(m._id)}
+          />
         ) : activeTab === "recommended" ? (
           <RecommendationsTab
             allMovies={movies}

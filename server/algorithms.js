@@ -1,8 +1,3 @@
-// ─── algorithms.js ─── KMP String Matching + Dynamic Programming ─────────────
-
-// ─── KMP (Knuth-Morris-Pratt) String Matching ────────────────────────────────
-// Used for: fast movie title/description search without regex overhead
-
 /**
  * Build the KMP failure function (partial match table).
  * Time: O(m) where m = pattern length
@@ -95,9 +90,6 @@ function movieRelevanceScore(movie, query) {
 
   return score;
 }
-
-
-// ─── Dynamic Programming ──────────────────────────────────────────────────────
 
 /**
  * Levenshtein Edit Distance (DP).
